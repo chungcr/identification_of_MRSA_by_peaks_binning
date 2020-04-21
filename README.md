@@ -4,4 +4,6 @@
 
 *R version 3.6.3 was used for implementing the analysis.
 
-*The packagee, 'caret', 'pROC', 'OptimalCutpoints', 'rpart', 'range', 'kknn', 'e1071', and 'OneR', you shoud download firstly to implement these scripts directly.
+*The packages, 'caret', 'pROC', 'OptimalCutpoints', 'rpart', 'range', 'kknn', 'e1071', and 'OneR', you shoud download firstly to implement these scripts directly.
+
+*The Label in data means that result of the antibiotic susceptibility testing indicated the resistant.
