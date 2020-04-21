@@ -10,13 +10,12 @@ library(e1071)	#SVM
 rm(list=ls(all=TRUE))
 
 ########## Set data path ##########
-data_path = "E:/Chang Gung/MRSA_Lee/BIB_revise/data/"
 FOLD = 5
 method = "DT"		#Choose ML method ("DT","RF","KNN","SVM")
 FS_order = "COR"		#Choose order of feature for forward feature selection ("COR","OneR")
 
-Training = read.csv(paste0(data_path,"Training data.csv"))
-Testing = read.csv(paste0(data_path,"Testing data.csv"))
+Training = read.csv("https://raw.githubusercontent.com/chungcr/identification_of_MRSA_by_peaks_binning/master/data/Training%20data.csv")
+Testing = read.csv("https://raw.githubusercontent.com/chungcr/identification_of_MRSA_by_peaks_binning/master/data/Testing%20data.csv")
 
 ML_grid = function(ML){
 	if(ML == "DT"){
@@ -213,7 +212,7 @@ opt_par = uni_par[mx_id,]
 opt_ML_par = opt_par
 
 ####### Start feature selection #######
-fs_order = read.csv(paste0(data_path,"FS_order.csv"))
+fs_order = read.csv("https://raw.githubusercontent.com/chungcr/identification_of_MRSA_by_peaks_binning/master/data/FS_order.csv")
 if(FS_order == "OneR"){
 	rank = fs_order$OneR
 }else{

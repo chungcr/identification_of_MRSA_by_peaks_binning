@@ -1,10 +1,9 @@
 rm(list=ls(all=TRUE))
 library(OneR)
 
-data_path = "E:/Chang Gung/MRSA_Lee/BIB_revise/data/"
-output_path = "E:/Chang Gung/MRSA_Lee/BIB_revise/data/"
+output_path = paste0(getwd(),"/")
 
-data = read.csv(paste0(data_path,"Training data.csv"))
+data = read.csv("https://raw.githubusercontent.com/chungcr/identification_of_MRSA_by_peaks_binning/master/data/Training%20data.csv")
 label = rep(-1,dim(data)[1])
 label[which(data$Label=="R")] = 1
 
