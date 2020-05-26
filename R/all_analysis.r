@@ -309,7 +309,6 @@ pred1 = ML_method(indep_Train,indep_Test,method,Opt_par)
 indep_perf_FS = eval_fun(length(which(test_lab==1)),length(which(test_lab==0)),pred1,test_lab)
 
 ###################################
-
 cat(" ","\n",
 	"*************************************","\n",
 	"Performance of 5-fold cross validation with feature selection:","\n",
