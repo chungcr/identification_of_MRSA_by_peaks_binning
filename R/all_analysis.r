@@ -73,12 +73,43 @@ ML_method = function(Train,Test,ML,parameters){
 		pred = model$prob[,1]
 	}else if(ML == "SVM"){
 		set.seed(10);model = svm(Train[,-dim(Train)[2]],as.factor(Train$Label),probability = TRUE,
-					cost=parameters$cost,kernel=as.character(parameters$kernel),gamma=para$gamma)
+					cost=parameters$cost,kernel=as.character(parameters$kernel),gamma=parameters$gamma)
 		pred = as.numeric(attr(predict(model, Test[,-dim(Test)[2]],probability = TRUE),"probabilities")[,1])
 	}else{
 		return("Please select  a ML method!")
 	}
 	return(pred)
+}
+
+fs_order = function(type,Data,Label){
+	out = 0
+	if(type=="COR"){
+		corr = rep(0,(dim(Data)[2]-1))
+		for(i in 1:(dim(Data)[2]-1)){
+			if((sd(Data[,i])!=0) &&(sd(Label)!=0)){
+				corr[i] = cor(Data[,i],Label)
+			}
+		}
+		out = order(abs(corr),decreasing=T)
+	}else if(type=="OneR"){
+		al_select = c()
+		for(numF in 1:(dim(Data)[2]-2)){
+			if(numF==1){
+				cur_data = Data
+				select = OneR(Label ~.,data = optbin(cur_data), verbose = F)
+				al_select = c(al_select,which(names(Data)==select$feature))
+				cur_data = Data[,-al_select]
+			}else{
+				cur_data = Data[,-al_select]
+			}
+			select = OneR(Label ~.,data = optbin(cur_data), verbose = F)
+			al_select = c(al_select,which(names(Data)==select$feature))
+		}
+		out = al_select
+	}else{
+		cat(paste0("Please type ",paste0("'COR' ",paste0( "or"," 'OneR'!"))),"\n")
+	}
+	return(out)
 }
 
 eval_fun = function(n_pos,n_neg,pred,true){
@@ -102,8 +133,10 @@ n = 10;	set.seed(n);	ffold_pos = createFolds(pos,5);	set.seed(n+200);	ffold_neg 
 para_name = names(ML_grid(method));	para_name = para_name[-length(para_name)]
 opt_par = matrix(NA,nrow=5,ncol=length(para_name))
 opt_par = data.frame(opt_par); names(opt_par) = para_name
-ncv_perf = matrix(NA,nrow=5,ncol=5)
 
+ncv_perf = matrix(NA,nrow=5,ncol=6)
+Rnk = matrix(NA,nrow=dim(Training)[2]-1,ncol=FOLD)
+min_numF = c(32, 32, 16, 16, 32)
 for(fold in 1:5){
 	cat("====================","\n")
 	cat("START FOLD = ",fold,"\n")
@@ -116,6 +149,10 @@ for(fold in 1:5){
 	}
 	Train = Training[c(train_pos,length(which(Training$Label=="R"))+train_neg),]
 	Test = Training[c(test_pos,length(which(Training$Label=="R"))+test_neg),]
+	in_label = rep(-1,dim(Train)[1]);	in_label[which(Train$Label=="R")] = 1
+	Rnk[,fold] = fs_order(FS_order,Train,in_label)
+	rank = Rnk[,fold]
+
 	sub_label = rep(NA,dim(Train)[1]);	sub_label[which(Train$Label=="R")] = 1;	sub_label[which(Train$Label=="S")] = 0
 	sub_pos = c(1:length(which(Train$Label=="R")));	sub_neg = c(1:length(which(Train$Label=="S")))
 	n = 10;	set.seed(n);	sub_ffold_pos = createFolds(sub_pos,FOLD);
@@ -140,9 +177,9 @@ for(fold in 1:5){
 			sub_Test <- sub_Test[rows,];	rm(rows)
 			pred = ML_method(sub_Train,sub_Test,method,hyper_grid[par,])
 			test_lab = rep(0,dim(sub_Test)[1]);	test_lab[which(sub_Test$Label=="R")] = 1
-				temp_perf[sub_fold] = as.numeric(auc(test_lab,pred))
-				cat("subfold_AUC = ",temp_perf[sub_fold] ,"\n")
-				rm(pred);rm(test_lab);rm(sub_Train);rm(sub_Test)
+			temp_perf[sub_fold] = as.numeric(auc(test_lab,pred))
+			cat("subfold_AUC = ",temp_perf[sub_fold] ,"\n")
+			rm(pred);rm(test_lab);rm(sub_Train);rm(sub_Test)
 		}
 		hyper_grid$auc[par] = mean(temp_perf)
 		cat("*******************","\n")
@@ -151,185 +188,71 @@ for(fold in 1:5){
 		cat("AUC = ",hyper_grid$auc[par],"\n");	rm(temp_perf)
 		cat("*******************","\n")
 	}#end_parameter
-	set.seed(80); rows = sample(nrow(Train),replace = FALSE)
-	Train <- Train[rows,];	rm(rows)
-	set.seed(50); rows = sample(nrow(Test),replace = FALSE)
-	Test <- Test[rows,];	rm(rows)
-	mx_id = which.max(hyper_grid$auc)
+	mx_par = which.max(hyper_grid$auc)
 	for(z in 1:(dim(hyper_grid)[2]-1)){
-		if(class(hyper_grid[mx_id,z])=="factor"){
-			opt_par[fold,z] = as.character(hyper_grid[mx_id,z])
+		if(class(hyper_grid[mx_par,z])=="factor"){
+			opt_par[fold,z] = as.character(hyper_grid[mx_par,z])
 		}else{
-			opt_par[fold,z] = hyper_grid[mx_id,z]
+			opt_par[fold,z] = hyper_grid[mx_par,z]
 		}
 	}
-	pred = ML_method(Train,Test,method,hyper_grid[mx_id,])
-	test_lab = rep(0,dim(Test)[1]);	test_lab[which(Test$Label=="R")] = 1
-	ncv_perf[fold,] = eval_fun(length(which(test_lab==1)),length(which(test_lab==0)),pred,test_lab)
-	cat("End FOLD = ",fold,"\n")
-	cat("====================","\n")
-	rm(pred);rm(Train);rm(Test);rm(test_lab);rm(hyper_grid)
-}
-###################################
-uni_par = unique.matrix(opt_par);	rm(opt_par)
-
-####### Confirm optimal parameters #######
-per_mat = matrix(NA,nrow=dim(uni_par)[1],ncol=10)
-for(par in 1:dim(uni_par)[1]){
-	ncv_perf = matrix(NA,nrow=5,ncol=5)
-	for(fold in 1:FOLD){
-		train_pos = c();	train_neg = c()
-		test_pos = ffold_pos[[fold]];	test_neg = ffold_neg[[fold]]
-		temp_fold = c(1:FOLD);	temp_fold = temp_fold[-fold]
-		for(jj in 1:length(temp_fold)){
-			train_pos = c(train_pos,ffold_pos[[temp_fold[jj]]]);
-			train_neg = c(train_neg,ffold_neg[[temp_fold[jj]]]);
-		}
-		Train = Training[c(train_pos,length(which(Training$Label=="R"))+train_neg),]
-		Test = Training[c(test_pos,length(which(Training$Label=="R"))+test_neg),]
-		set.seed(80); rows = sample(nrow(Train),replace = FALSE)
-		Train <- Train[rows,];	rm(rows)
-		set.seed(50); rows = sample(nrow(Test),replace = FALSE)
-		Test <- Test[rows,];	rm(rows)
-		pred = ML_method(Train,Test,method,uni_par[par,])
-		test_lab = rep(0,dim(Test)[1]);	test_lab[which(Test$Label=="R")] = 1
-		ncv_perf[fold,] = eval_fun(length(which(test_lab==1)),length(which(test_lab==0)),pred,test_lab)
-		rm(pred);rm(Train);rm(Test);rm(test_lab)
-		cat("=====================================================","\n")
-		cat("FOLD = ",fold,"\n")
-		cat("Performance = ",round(ncv_perf[fold,],digits=4),"\n")
-		cat("=====================================================","\n")
-	
-	}#end_5-fold
-	per_mat[par,] = c(mean(ncv_perf[,1]),mean(ncv_perf[,2]),mean(ncv_perf[,3]),mean(ncv_perf[,4]),mean(ncv_perf[,5]),
-					sd(ncv_perf[,1]),sd(ncv_perf[,2]),sd(ncv_perf[,3]),sd(ncv_perf[,4]),sd(ncv_perf[,5]))
-	rm(ncv_perf)
-}#end_par
-###################################
-mx_id = which.max(per_mat[,5])
-final_perf = per_mat[mx_id,]
-opt_par = uni_par[mx_id,]
-opt_ML_par = opt_par
-
-####### Start feature selection #######
-fs_order = read.csv("https://raw.githubusercontent.com/chungcr/identification_of_MRSA_by_peaks_binning/master/data/FS_order.csv")
-if(FS_order == "OneR"){
-	rank = fs_order$OneR
-}else{
-	rank = fs_order$COR
-}
-ncv_perf = matrix(NA,nrow=5,ncol=6)
-for(fold in 1:5){
-	cat("====================","\n")
-	cat("START FOLD = ",fold,"\n")
-	train_pos = c();	train_neg = c()
-	test_pos = ffold_pos[[fold]];	test_neg = ffold_neg[[fold]]
-	temp_fold = c(1:FOLD);	temp_fold = temp_fold[-fold]
-	for(jj in 1:length(temp_fold)){
-		train_pos = c(train_pos,ffold_pos[[temp_fold[jj]]]);
-		train_neg = c(train_neg,ffold_neg[[temp_fold[jj]]]);
+	numF = unique(c(seq(min_numF[fold],length(rank),5),length(rank)))
+	out_fs_perf = rep(NA,length(numF))
+	##### Select features based on outer loop ######
+	cat("Select features for testing fold: ",fold, "\n")
+	for(nF in 1:length(numF)){
+		sel_feature = sort(rank[c(1:numF[nF])])
+		out_train = Train[,c(sel_feature,dim(Train)[2])]
+		out_test = Test[,c(sel_feature,dim(Test)[2])]
+		set.seed(80); rows = sample(nrow(out_train),replace = FALSE)
+		out_train <- out_train[rows,];	rm(rows)
+		set.seed(50); rows = sample(nrow(out_test),replace = FALSE)
+		out_test <- out_test[rows,];	rm(rows)
+		pred = ML_method(out_train,out_test,method,hyper_grid[mx_par,])
+		test_lab = rep(0,dim(out_test)[1]);	test_lab[which(out_test$Label=="R")] = 1
+		out_fs_perf[nF] = as.numeric(auc(test_lab,pred))
+		rm(sel_feature);rm(out_train);rm(out_test);rm(pred);rm(test_lab)
 	}
-	Train = Training[c(train_pos,length(which(Training$Label=="R"))+train_neg),]
-	Test = Training[c(test_pos,length(which(Training$Label=="R"))+test_neg),]
-	sub_label = rep(NA,dim(Train)[1]);	sub_label[which(Train$Label=="R")] = 1;	sub_label[which(Train$Label=="S")] = 0
-	sub_pos = c(1:length(which(Train$Label=="R")));	sub_neg = c(1:length(which(Train$Label=="S")))
-	n = 10;	set.seed(n);	sub_ffold_pos = createFolds(sub_pos,FOLD);
-			set.seed(n+200);	sub_ffold_neg = createFolds(sub_neg,FOLD)
-
-	if(method == "RF"){
-		min_mtry = opt_par$mtry
-		try = ceiling((length(rank)-min_mtry)/5)
-	}else{
-		try = round(length(rank)/5)
+	temp_mx = which.max(out_fs_perf)
+	test = c(numF[temp_mx]-4,numF[temp_mx]-3,numF[temp_mx]-2,numF[temp_mx]-1,numF[temp_mx],
+			numF[temp_mx]+1,numF[temp_mx]+2,numF[temp_mx]+3,numF[temp_mx]+4)
+	if(length(which(test>(dim(Training)[2]-1)))!=0){
+		test[which(test>(dim(Training)[2]-1))] = dim(Training)[2] - 1
 	}
-	temp_perf = matrix(NA,nrow=try,ncol=FOLD)
-	for(sub_fold in 1:FOLD){
-		sub_train_pos = c();	sub_train_neg = c()
-		sub_test_pos = sub_ffold_pos[[sub_fold]];	sub_test_neg = sub_ffold_neg[[sub_fold]]
-		temp_fold = c(1:FOLD);	temp_fold = temp_fold[-sub_fold]
-		for(jj in 1:length(temp_fold)){
-			sub_train_pos = c(sub_train_pos,sub_ffold_pos[[temp_fold[jj]]]);
-			sub_train_neg = c(sub_train_neg,sub_ffold_neg[[temp_fold[jj]]]);
-		}
-		Sub_Train = Train[c(sub_train_pos,length(which(Train$Label=="R"))+sub_train_neg),]
-		Sub_Test = Train[c(sub_test_pos,length(which(Train$Label=="R"))+sub_test_neg),]
-		set.seed(80); rows = sample(nrow(Sub_Train),replace = FALSE)
-		Sub_Train <- Sub_Train[rows,];	rm(rows)
-		set.seed(50); rows = sample(nrow(Sub_Test),replace = FALSE)
-		Sub_Test <- Sub_Test[rows,];	rm(rows)
-		for(par in 1:try){
-			if(method == "RF"){
-				if(par==1){
-					sel_feature = rank[c(1:(min_mtry))][which(!is.na(rank[c(1:(min_mtry))]))]
-					sub_Train = Sub_Train[,c(sel_feature,dim(Sub_Train)[2])]
-					sub_Test = Sub_Test[,c(sel_feature,dim(Sub_Test)[2])]
-				}else{
-					sel_feature = rank[c(1:(min_mtry+5*(par-1)))][which(!is.na(rank[c(1:(min_mtry+5*(par-1)))]))]
-					sub_Train = Sub_Train[,c(sel_feature,dim(Sub_Train)[2])]
-					sub_Test = Sub_Test[,c(sel_feature,dim(Sub_Test)[2])]
-				}
-				pred = ML_method(sub_Train,sub_Test,method,opt_par)
-				test_lab = rep(0,dim(sub_Test)[1]);	test_lab[which(sub_Test$Label=="R")] = 1
-				temp_perf[par,sub_fold] = as.numeric(auc(test_lab,pred))
-				cat("*********************************************","\n")
-				cat("FOLD = ",fold,"\n")
-				cat("subFOLD = ",sub_fold ,"\n")
-				cat(par,"/",try,"\n")
-				cat("subfold_AUC = ",temp_perf[par,sub_fold] ,"\n")
-				cat("*********************************************","\n")
-				rm(pred);rm(test_lab);rm(sub_Train);rm(sub_Test);rm(sel_feature)
-			}else{
-				sel_feature = rank[c(1:(par*5))][which(!is.na(rank[c(1:(par*5))]))]
-				sub_Train = Sub_Train[,c(sel_feature,dim(Sub_Train)[2])]
-				sub_Test = Sub_Test[,c(sel_feature,dim(Sub_Test)[2])]
-				pred = ML_method(sub_Train,sub_Test,method,opt_par)
-				test_lab = rep(0,dim(sub_Test)[1]);	test_lab[which(sub_Test$Label=="R")] = 1
-				temp_perf[par,sub_fold] = as.numeric(auc(test_lab,pred))
-				cat("*********************************************","\n")
-				cat("FOLD = ",fold,"\n")
-				cat("subFOLD = ",sub_fold ,"\n")
-				cat(par,"/",try,"\n")
-				cat("subfold_AUC = ",temp_perf[par,sub_fold] ,"\n")
-				cat("*********************************************","\n")
-				rm(pred);rm(test_lab);rm(sub_Train);rm(sub_Test);rm(sel_feature)
-			}	
-		}
-	}#end_parameter
-	eva = rep(0,try)
-	for(j in 1:try){
-		eva[j] = mean(temp_perf[j,], na.rm = TRUE)
+	if(length(which(test<min_numF[fold]))!=0){
+		test[which(test<min_numF[fold])] = min_numF[fold]
 	}
-	set.seed(80); rows = sample(nrow(Train),replace = FALSE)
-	Train <- Train[rows,];	rm(rows)
-	set.seed(50); rows = sample(nrow(Test),replace = FALSE)
-	Test <- Test[rows,];	rm(rows)
-	mx_id = which.max(eva)[1]	;rm(eva)
-	test = c(5*mx_id-3,5*mx_id-2,5*mx_id-1,5*mx_id,5*mx_id+1,5*mx_id+2)
-	Temp_perf = matrix(NA,nrow=length(test),ncol=5)
+	test = unique(test)
+	Out_fs_perf = matrix(NA,nrow=length(test),ncol=6);	Out_fs_perf[,1] = test
 	for(z in 1:length(test)){
-		Ttrain <- Train[,c(rank[c(1:test[z])],dim(Sub_Train)[2])]
-		Ttest <- Test[,c(rank[c(1:test[z])],dim(Sub_Train)[2])]
-		pred = ML_method(Ttrain,Ttest,method,opt_par)
-		test_lab = rep(0,dim(Ttest)[1]);	test_lab[which(Ttest$Label=="R")] = 1
-		Temp_perf[z,] = eval_fun(length(which(test_lab==1)),length(which(test_lab==0)),pred,test_lab)
-		rm(pred);rm(Ttrain);rm(Ttest);rm(test_lab)
+		sel_feature = sort(rank[c(1:test[z])])
+		out_train = Train[,c(sel_feature,dim(Train)[2])]
+		out_test = Test[,c(sel_feature,dim(Test)[2])]
+		set.seed(80); rows = sample(nrow(out_train),replace = FALSE)
+		out_train <- out_train[rows,];	rm(rows)
+		set.seed(50); rows = sample(nrow(out_test),replace = FALSE)
+		out_test <- out_test[rows,];	rm(rows)
+		pred = ML_method(out_train,out_test,method,hyper_grid[mx_par,])
+		test_lab = rep(0,dim(out_test)[1]);	test_lab[which(out_test$Label=="R")] = 1
+		Out_fs_perf[z,c(2:6)] = eval_fun(length(which(test_lab==1)),length(which(test_lab==0)),pred,test_lab)
+		rm(sel_feature);rm(out_train);rm(out_test);rm(pred);rm(test_lab)
 	}
-	Mx_id = which.max(Temp_perf[,5])[1]
-	ncv_perf[fold,] = c(test[Mx_id],Temp_perf[Mx_id,])
+
+	Mx_id = which.max(Out_fs_perf[,6])[1];	ncv_perf[fold,] = Out_fs_perf[Mx_id,]
 	cat("=====================================================","\n")
 	cat("FOLD = ",fold,"\n")
 	cat("Num Features = ",test[Mx_id],"\n")	
 	cat("Performance = ",round(ncv_perf[fold,],digits=4),"\n")
 	cat("=====================================================","\n")
-	rm(mx_id);rm(Temp_perf);rm(Mx_id);rm(test);rm(Train);rm(Test)
+	rm(Mx_id);rm(Train);rm(Test);rm(Out_fs_perf);rm(test);rm(hyper_grid)
 }
 ###################################
-Uni_par = unique(ncv_perf[,1]);
 
-####### Confirm optimal features #######
-per_mat = matrix(NA,nrow=length(Uni_par),ncol=10)
-for(par in 1:length(Uni_par)){
-	ncv_perf = matrix(NA,nrow=5,ncol=5)
+####### Confirm optimal parameters and features #######
+per_mat = matrix(NA,nrow=FOLD,ncol=10)
+for(par in 1:FOLD){
+	temp_perf = matrix(NA,nrow=5,ncol=5)
+	sel_feature = sort(Rnk[c(1:ncv_perf[par,1]),par])
 	for(fold in 1:FOLD){
 		train_pos = c();	train_neg = c()
 		test_pos = ffold_pos[[fold]];	test_neg = ffold_neg[[fold]]
@@ -344,24 +267,28 @@ for(par in 1:length(Uni_par)){
 		Train <- Train[rows,];	rm(rows)
 		set.seed(50); rows = sample(nrow(Test),replace = FALSE)
 		Test <- Test[rows,];	rm(rows)
-		Train <- Train[,c(rank[c(1:Uni_par[par])],dim(Train)[2])]
-		Test <- Test[,c(rank[c(1:Uni_par[par])],dim(Test)[2])]
-		pred = ML_method(Train,Test,method,opt_par)
+		Train <- Train[,c(sel_feature,dim(Train)[2])]
+		Test <- Test[,c(sel_feature,dim(Test)[2])]
+		pred = ML_method(Train,Test,method,opt_par[par,])
 		test_lab = rep(0,dim(Test)[1]);	test_lab[which(Test$Label=="R")] = 1
-		ncv_perf[fold,] = eval_fun(length(which(test_lab==1)),length(which(test_lab==0)),pred,test_lab)
+		temp_perf[fold,] = eval_fun(length(which(test_lab==1)),length(which(test_lab==0)),pred,test_lab)
 		rm(pred);rm(Train);rm(Test);rm(test_lab)
 		cat("=====================================================","\n")
 		cat("FOLD = ",fold,"\n")
 		cat("Performance = ",round(ncv_perf[fold,],digits=4),"\n")
 		cat("=====================================================","\n")
 	}#end_5-fold
-	per_mat[par,] = c(mean(ncv_perf[,1]),mean(ncv_perf[,2]),mean(ncv_perf[,3]),mean(ncv_perf[,4]),mean(ncv_perf[,5]),
-					sd(ncv_perf[,1]),sd(ncv_perf[,2]),sd(ncv_perf[,3]),sd(ncv_perf[,4]),sd(ncv_perf[,5]))
-	rm(ncv_perf)
+	per_mat[par,] = c(mean(temp_perf[,1]),mean(temp_perf[,2]),mean(temp_perf[,3]),mean(temp_perf[,4]),mean(temp_perf[,5]),
+					sd(temp_perf[,1]),sd(temp_perf[,2]),sd(temp_perf[,3]),sd(temp_perf[,4]),sd(temp_perf[,5]))
+	rm(temp_perf);rm(sel_feature)
 }#end_par
 ###################################
-opt_numF = Uni_par[which.max(per_mat[,5])]
-fs_perf = per_mat[which.max(per_mat[,5]),]
+opt_idx = which.max(per_mat[,5])
+opt_numF = ncv_perf[opt_idx,1]
+Opt_par = opt_par[opt_idx,]
+fs_perf = per_mat[opt_idx,]
+sel_feature = sort(Rnk[c(1:ncv_perf[opt_idx,1]),opt_idx])
+final_perf = per_mat[opt_idx,]
 
 ####### Independent testing #######
 indep_Train <- Training
@@ -371,33 +298,26 @@ indep_Train <- indep_Train[rows,];	rm(rows)
 set.seed(50); rows = sample(nrow(indep_Test),replace = FALSE)
 indep_Test <- indep_Test[rows,];	rm(rows)
 test_lab = rep(0,dim(indep_Test)[1]);	test_lab[which(indep_Test$Label=="R")] = 1
-pred0 = ML_method(indep_Train,indep_Test,method,opt_par)
+pred0 = ML_method(indep_Train,indep_Test,method,Opt_par)
 indep_perf_NO_FS = eval_fun(length(which(test_lab==1)),length(which(test_lab==0)),pred0,test_lab)
 rm(indep_Train);rm(indep_Test)
 set.seed(80); rows = sample(nrow(Training),replace = FALSE)
-indep_Train <- Training[rows,c(rank[c(1:opt_numF)],dim(Training)[2])]
+indep_Train <- Training[rows,c(sel_feature,dim(Training)[2])]
 set.seed(50); rows = sample(nrow(Testing),replace = FALSE)
-indep_Test <- Testing[rows,c(rank[c(1:opt_numF)],dim(Testing)[2])]
-pred1 = ML_method(indep_Train,indep_Test,method,opt_par)
+indep_Test <- Testing[rows,c(sel_feature,dim(Testing)[2])]
+pred1 = ML_method(indep_Train,indep_Test,method,Opt_par)
 indep_perf_FS = eval_fun(length(which(test_lab==1)),length(which(test_lab==0)),pred1,test_lab)
 
 ###################################
 
 cat(" ","\n",
 	"*************************************","\n",
-	"Performance of 5-fold cross validation without feature selection:","\n",
-	"Sensitivity: ",round(final_perf[1],digits=4),"¡Ó",round(final_perf[6],digits=4),"\n",
-	"Specificity: ",round(final_perf[2],digits=4),"¡Ó",round(final_perf[7],digits=4),"\n",
-	"Accuracy: ",round(final_perf[3],digits=4),"¡Ó",round(final_perf[8],digits=4),"\n",
-	"Matthews correlation coefficient: ",round(final_perf[4],digits=4),"¡Ó",round(final_perf[9],digits=4),"\n",
-	"AUC: ",round(final_perf[5],digits=4),"¡Ó",round(final_perf[10],digits=4),"\n",
-	"*************************************","\n",
 	"Performance of 5-fold cross validation with feature selection:","\n",
-	"Sensitivity: ",round(fs_perf[1],digits=4),"¡Ó",round(fs_perf[6],digits=4),"\n",
-	"Specificity: ",round(fs_perf[2],digits=4),"¡Ó",round(fs_perf[7],digits=4),"\n",
-	"Accuracy: ",round(fs_perf[3],digits=4),"¡Ó",round(fs_perf[8],digits=4),"\n",
-	"Matthews correlation coefficient: ",round(fs_perf[4],digits=4),"¡Ó",round(fs_perf[9],digits=4),"\n",
-	"AUC: ",round(fs_perf[5],digits=4),"¡Ó",round(fs_perf[10],digits=4),"\n",
+	"Sensitivity: ",round(fs_perf[1],digits=4),"Â±",round(fs_perf[6],digits=4),"\n",
+	"Specificity: ",round(fs_perf[2],digits=4),"Â±",round(fs_perf[7],digits=4),"\n",
+	"Accuracy: ",round(fs_perf[3],digits=4),"Â±",round(fs_perf[8],digits=4),"\n",
+	"Matthews correlation coefficient: ",round(fs_perf[4],digits=4),"Â±",round(fs_perf[9],digits=4),"\n",
+	"AUC: ",round(fs_perf[5],digits=4),"Â±",round(fs_perf[10],digits=4),"\n",
 	"*************************************","\n",
 	"Performance of independent testing without feature selection:","\n",
 	"Number of features: ",dim(Training)[2]-1,"\n",
